@@ -41,14 +41,27 @@ func OpenCompressedFile(path string) (*CompressedFile, error) {
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	cf := &CompressedFile{f: f, cacheIdx: -1}
-	if err := cf.init(); err != nil {
+	if err := cf.init(nil); err != nil {
 		f.Close()
 		return nil, err
 	}
 	return cf, nil
 }
 
-func (cf *CompressedFile) init() error {
+func OpenCompressedFileWithIndex(path string, index []blockInfo) (*CompressedFile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	cf := &CompressedFile{f: f, cacheIdx: -1}
+	if err := cf.init(index); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return cf, nil
+}
+
+func (cf *CompressedFile) init(index []blockInfo) error {
 	algo, blockSize, err := readHeader(cf.f)
 	if err != nil {
 		return err
@@ -61,6 +74,14 @@ func (cf *CompressedFile) init() error {
 		return fmt.Errorf("stat: %w", err)
 	}
 	fileSize := fi.Size()
+
+	if len(index) != 0 {
+		cf.cleanClose = true
+		cf.index = index
+		cf.numBlocks = len(index)
+		cf.originalSize = int64(index[len(cf.index)-1].OriginalSize) + int64(cf.blockSize*len(cf.index)-1)
+		return nil
+	}
 
 	// Clean close: read contiguous index.
 	if ok, nb, orig, idxOff := parseFooter(cf.f, fileSize, cf.algo, cf.blockSize); ok {
@@ -213,6 +234,10 @@ func (cf *CompressedFile) Close() error {
 	cf.zstdDec = nil
 	cf.cacheData = nil
 	return cf.f.Close()
+}
+
+func (cf *CompressedFile) GetBlockIndex() []blockInfo {
+	return cf.index
 }
 
 func (cf *CompressedFile) OriginalSize() int64  { return cf.originalSize }
