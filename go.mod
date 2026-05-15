@@ -1,4 +1,4 @@
-module segCompress
+module github.com/mababaNiubi/segCompress
 
 go 1.25.6
 
