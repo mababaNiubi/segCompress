@@ -15,7 +15,7 @@ A Go library for compressing data into seekable, crash-safe block-compressed fil
 ## Installation
 
 ```bash
-go get github.com/mababaNiubi/segCompress.git
+go get github.com/mababaNiubi/segCompress
 ```
 
 
@@ -24,7 +24,7 @@ go get github.com/mababaNiubi/segCompress.git
 ### Compress & decompress a file
 
 ```go
-import "github.com/mababaNiubi/segCompress.git"
+import "github.com/mababaNiubi/segCompress"
 
 // Compress with Zstd default level, 64 KB blocks.
 segment.CompressFile("data.bin", "data.sc", 64<<10, segment.AlgoZstd, segment.ZstdDefault)
@@ -195,4 +195,4 @@ Block size: 64 KB. Seek+Read: random seek + transparent decompress 4 KB. Measure
 
 MIT
 
-## AI generated code
+## AI generated
