@@ -97,17 +97,19 @@ func (cf *CompressedFile) init(index []blockInfo) error {
 	return cf.scanRecover(fileSize)
 }
 
-func (cf *CompressedFile) scanRecover(fileSize int64) error {
+// scanBlockIndex scans a file for valid blocks via inline headers.
+// Returns the recovered index and total original size.
+// Stops at sentinel (cSize=0), truncated header, or truncated block data.
+func scanBlockIndex(f *os.File, fileSize int64) ([]blockInfo, int64) {
+	var index []blockInfo
+	var origSize int64
 	pos := int64(headerSz)
-	cf.index = nil
-	cf.numBlocks = 0
-	cf.originalSize = 0
 	for {
 		if pos+int64(blkHdrSz) > fileSize {
 			break
 		}
 		bh := make([]byte, blkHdrSz)
-		if _, err := cf.f.ReadAt(bh, pos); err != nil {
+		if _, err := f.ReadAt(bh, pos); err != nil {
 			break
 		}
 		cSize := binary.LittleEndian.Uint32(bh[0:4])
@@ -118,13 +120,18 @@ func (cf *CompressedFile) scanRecover(fileSize int64) error {
 		if pos+int64(blkHdrSz)+int64(cSize) > fileSize {
 			break
 		}
-		cf.index = append(cf.index, blockInfo{
+		index = append(index, blockInfo{
 			CompressedOffset: uint64(pos), CompressedSize: cSize, OriginalSize: oSize,
 		})
-		cf.numBlocks++
-		cf.originalSize += int64(oSize)
+		origSize += int64(oSize)
 		pos += int64(blkHdrSz) + int64(cSize)
 	}
+	return index, origSize
+}
+
+func (cf *CompressedFile) scanRecover(fileSize int64) error {
+	cf.index, cf.originalSize = scanBlockIndex(cf.f, fileSize)
+	cf.numBlocks = len(cf.index)
 	return nil
 }
 

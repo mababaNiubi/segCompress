@@ -38,6 +38,21 @@ func readHeader(r io.Reader) (algo Algorithm, blockSize int, err error) {
 	return Algorithm(b[5]), int(binary.LittleEndian.Uint32(b[7:11])), nil
 }
 
+// readHeaderFull reads header and also returns the compression level.
+func readHeaderFull(r io.Reader) (algo Algorithm, level int, blockSize int, err error) {
+	b := make([]byte, headerSz)
+	if _, err = io.ReadFull(r, b); err != nil {
+		return 0, 0, 0, fmt.Errorf("header: %w", err)
+	}
+	if string(b[0:4]) != magicStr {
+		return 0, 0, 0, fmt.Errorf("bad magic %q", b[0:4])
+	}
+	if b[4] != formatVer {
+		return 0, 0, 0, fmt.Errorf("version %d want %d", b[4], formatVer)
+	}
+	return Algorithm(b[5]), int(b[6]), int(binary.LittleEndian.Uint32(b[7:11])), nil
+}
+
 // ─── Inline block header ───────────────────────────────────────────
 
 func writeBlkHdr(w io.Writer, cSize, oSize uint32) {

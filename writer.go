@@ -132,6 +132,68 @@ func NewCompressedWriter(path string, blockSize int, algo Algorithm, level int) 
 	return &CompressedWriter{sw: sw, file: f, bw: bw}, nil
 }
 
+// ResumeCompressedWriter opens an existing compressed file for continued
+// writing.  If the file was not cleanly closed (missing or corrupt footer),
+// it scans inline block headers, truncates any trailing incomplete data, and
+// resumes from the last complete block.  Returns an error if the file was
+// cleanly closed (footer present) — use NewCompressedWriter to overwrite.
+func ResumeCompressedWriter(path string) (*CompressedWriter, error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+
+	algo, level, blockSize, err := readHeaderFull(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("stat: %w", err)
+	}
+	fileSize := fi.Size()
+
+	// If footer is valid the file was cleanly closed — nothing to recover.
+	if ok, _, _, _ := parseFooter(f, fileSize, algo, blockSize); ok {
+		f.Close()
+		return nil, fmt.Errorf("file was cleanly closed, use NewCompressedWriter to overwrite")
+	}
+
+	index, origSize := scanBlockIndex(f, fileSize)
+
+	// Compute end position of last valid block.
+	curOff := int64(headerSz)
+	for _, bi := range index {
+		curOff += int64(blkHdrSz) + int64(bi.CompressedSize)
+	}
+
+	if err := f.Truncate(curOff); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("truncate: %w", err)
+	}
+	if _, err := f.Seek(curOff, io.SeekStart); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("seek: %w", err)
+	}
+
+	bw := bufio.NewWriterSize(f, writeBufSize)
+	sw := &segWriter{
+		w:         bw,
+		curOff:    curOff,
+		blockSize: blockSize,
+		algo:      algo,
+		level:     level,
+		abuf:      make([]byte, blockSize),
+		index:     index,
+		origSize:  origSize,
+	}
+
+	return &CompressedWriter{sw: sw, file: f, bw: bw}, nil
+}
+
 func (w *CompressedWriter) Write(p []byte) (int, error) {
 	if w.sw.closed {
 		return 0, errors.New("writer closed")

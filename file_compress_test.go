@@ -173,6 +173,108 @@ func TestCrashRecoveryMidBlock(t *testing.T) {
 	}
 }
 
+// ─── Resume after crash (write recovery) ────────────────────────────
+
+func TestResumeAfterCrashBetweenBlocks(t *testing.T) {
+	bs := 4096
+	first := make([]byte, bs*3)
+	second := make([]byte, bs*2)
+	for i := range first {
+		first[i] = byte((i * 7) % 256)
+	}
+	for i := range second {
+		second[i] = byte((i * 13) % 256)
+	}
+
+	for _, cfg := range benchConfigs {
+		t.Run(cfg.name, func(t *testing.T) {
+			dst := tmpPath(t, "dst.sc")
+			w, _ := NewCompressedWriter(dst, bs, cfg.algo, cfg.level)
+			w.Write(first)
+			path := simulateCrash(t, w)
+
+			// Resume and write more.
+			rw, err := ResumeCompressedWriter(path)
+			if err != nil {
+				t.Fatal("resume:", err)
+			}
+			rw.Write(second)
+			if err := rw.Close(); err != nil {
+				t.Fatal("close after resume:", err)
+			}
+
+			cf, _ := OpenCompressedFile(path)
+			defer cf.Close()
+			if !cf.CleanClose() {
+				t.Fatal("expected clean close after resume")
+			}
+			expected := append(first, second...)
+			result, _ := io.ReadAll(cf)
+			if !bytes.Equal(expected, result) {
+				t.Fatalf("content mismatch: got %d bytes want %d", len(result), len(expected))
+			}
+		})
+	}
+}
+
+func TestResumeAfterCrashMidBlock(t *testing.T) {
+	bs := 4096
+	full := make([]byte, bs*3)
+	partial := make([]byte, 1000)
+	more := make([]byte, bs*2)
+	for i := range full {
+		full[i] = byte((i * 7) % 256)
+	}
+	for i := range partial {
+		partial[i] = byte((i * 13) % 256)
+	}
+	for i := range more {
+		more[i] = byte((i * 3) % 256)
+	}
+
+	for _, cfg := range benchConfigs {
+		t.Run(cfg.name, func(t *testing.T) {
+			dst := tmpPath(t, "dst.sc")
+			w, _ := NewCompressedWriter(dst, bs, cfg.algo, cfg.level)
+			w.Write(append(full, partial...))
+			path := simulateCrash(t, w)
+
+			// Resume — partial block should be discarded.
+			rw, err := ResumeCompressedWriter(path)
+			if err != nil {
+				t.Fatal("resume:", err)
+			}
+			if rw.NumBlocks() != 3 {
+				t.Fatalf("expected 3 recovered blocks, got %d", rw.NumBlocks())
+			}
+			rw.Write(more)
+			if err := rw.Close(); err != nil {
+				t.Fatal("close after resume:", err)
+			}
+
+			cf, _ := OpenCompressedFile(path)
+			defer cf.Close()
+			expected := append(full, more...)
+			result, _ := io.ReadAll(cf)
+			if !bytes.Equal(expected, result) {
+				t.Fatalf("content mismatch: got %d bytes want %d", len(result), len(expected))
+			}
+		})
+	}
+}
+
+func TestResumeCleanlyClosedFile(t *testing.T) {
+	dst := tmpPath(t, "dst.sc")
+	w, _ := NewCompressedWriter(dst, 4096, AlgoSnappy, 0)
+	w.Write(make([]byte, 4096))
+	w.Close()
+
+	_, err := ResumeCompressedWriter(dst)
+	if err == nil {
+		t.Fatal("expected error resuming cleanly closed file")
+	}
+}
+
 func TestCrashThenCleanClose(t *testing.T) {
 	bs := 4096
 	original := make([]byte, bs*3)
