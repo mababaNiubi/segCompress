@@ -79,7 +79,12 @@ func (cf *CompressedFile) init(index []blockInfo) error {
 		cf.cleanClose = true
 		cf.index = index
 		cf.numBlocks = len(index)
-		cf.originalSize = int64(index[len(cf.index)-1].OriginalSize) + int64(cf.blockSize*len(cf.index)-1)
+		// Read originalSize from footer; fall back to full-block assumption.
+		if ok, _, orig, _ := parseFooter(cf.f, fileSize, cf.algo, cf.blockSize); ok {
+			cf.originalSize = orig
+		} else {
+			cf.originalSize = int64(len(index)) * int64(cf.blockSize)
+		}
 		return nil
 	}
 
@@ -98,11 +103,9 @@ func (cf *CompressedFile) init(index []blockInfo) error {
 }
 
 // scanBlockIndex scans a file for valid blocks via inline headers.
-// Returns the recovered index and total original size.
+// Returns the recovered index and the end position of valid data.
 // Stops at sentinel (cSize=0), truncated header, or truncated block data.
-func scanBlockIndex(f *os.File, fileSize int64) ([]blockInfo, int64) {
-	var index []blockInfo
-	var origSize int64
+func scanBlockIndex(f *os.File, fileSize int64) (index []blockInfo, endPos int64) {
 	pos := int64(headerSz)
 	for {
 		if pos+int64(blkHdrSz) > fileSize {
@@ -113,7 +116,6 @@ func scanBlockIndex(f *os.File, fileSize int64) ([]blockInfo, int64) {
 			break
 		}
 		cSize := binary.LittleEndian.Uint32(bh[0:4])
-		oSize := binary.LittleEndian.Uint32(bh[4:8])
 		if cSize == 0 {
 			break // sentinel
 		}
@@ -121,17 +123,27 @@ func scanBlockIndex(f *os.File, fileSize int64) ([]blockInfo, int64) {
 			break
 		}
 		index = append(index, blockInfo{
-			CompressedOffset: uint64(pos), CompressedSize: cSize, OriginalSize: oSize,
+			CompressedOffset: uint64(pos), CompressedSize: cSize,
 		})
-		origSize += int64(oSize)
 		pos += int64(blkHdrSz) + int64(cSize)
 	}
-	return index, origSize
+	return index, pos
 }
 
 func (cf *CompressedFile) scanRecover(fileSize int64) error {
-	cf.index, cf.originalSize = scanBlockIndex(cf.f, fileSize)
+	cf.index, _ = scanBlockIndex(cf.f, fileSize)
 	cf.numBlocks = len(cf.index)
+	if cf.numBlocks == 0 {
+		cf.originalSize = 0
+		return nil
+	}
+	// All blocks except possibly the last are full. Decompress the last
+	// block to learn its actual original size.
+	lastN, err := decompressedBlockSize(cf.f, cf.index[cf.numBlocks-1], cf.blockSize, cf.algo)
+	if err != nil {
+		return fmt.Errorf("recover last block: %w", err)
+	}
+	cf.originalSize = int64(cf.numBlocks-1)*int64(cf.blockSize) + int64(lastN)
 	return nil
 }
 
@@ -151,12 +163,16 @@ func (cf *CompressedFile) loadBlock(idx int) {
 		return
 	}
 	bi := cf.index[idx]
+	origLen := cf.blockSize
+	if idx == cf.numBlocks-1 {
+		origLen = int(cf.originalSize - int64(cf.numBlocks-1)*int64(cf.blockSize))
+	}
 	compressed := make([]byte, bi.CompressedSize)
 	if _, err := cf.f.ReadAt(compressed, int64(bi.CompressedOffset)+blkHdrSz); err != nil {
 		cf.cacheErr = fmt.Errorf("read block %d: %w", idx, err)
 		return
 	}
-	data, err := decompressBlock(compressed, int(bi.OriginalSize), cf.algo, &cf.zstdDec)
+	data, err := decompressBlock(compressed, origLen, cf.algo, &cf.zstdDec)
 	if err != nil {
 		cf.cacheErr = fmt.Errorf("decompress block %d: %w", idx, err)
 		return
@@ -303,7 +319,6 @@ func (sr *StreamReader) nextBlock() error {
 		return fmt.Errorf("block header: %w", err)
 	}
 	cSize := binary.LittleEndian.Uint32(bh[0:4])
-	oSize := binary.LittleEndian.Uint32(bh[4:8])
 	if cSize == 0 { // sentinel
 		sr.done = true
 		return io.EOF
@@ -312,7 +327,7 @@ func (sr *StreamReader) nextBlock() error {
 	if _, err := io.ReadFull(sr.src, compressed); err != nil {
 		return fmt.Errorf("block data: %w", err)
 	}
-	data, err := decompressBlock(compressed, int(oSize), sr.algo, &sr.zstdDec)
+	data, err := decompressBlock(compressed, sr.blockSize, sr.algo, &sr.zstdDec)
 	if err != nil {
 		return fmt.Errorf("decompress: %w", err)
 	}

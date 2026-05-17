@@ -2,6 +2,7 @@ package boxtest
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
@@ -47,6 +48,21 @@ func compressBlock(data []byte, algo Algorithm, level int, zstdEnc **zstd.Encode
 	default:
 		return nil, fmt.Errorf("unknown codec: %d", algo)
 	}
+}
+
+// decompressedBlockSize reads the compressed payload for bi from f,
+// decompresses it, and returns the actual original size.
+func decompressedBlockSize(f *os.File, bi blockInfo, blockSize int, algo Algorithm) (int, error) {
+	compressed := make([]byte, bi.CompressedSize)
+	if _, err := f.ReadAt(compressed, int64(bi.CompressedOffset)+int64(blkHdrSz)); err != nil {
+		return 0, err
+	}
+	var zstdDec *zstd.Decoder
+	data, err := decompressBlock(compressed, blockSize, algo, &zstdDec)
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 // decompressBlock dispatches to the selected codec.  zstdDec is lazy-allocated

@@ -70,15 +70,14 @@ func (s *segWriter) flush() error {
 	if err != nil {
 		return fmt.Errorf("compress: %w", err)
 	}
-	cSize, oSize := uint32(len(compressed)), uint32(s.an)
-	writeBlkHdr(s.w, cSize, oSize)
+	cSize := uint32(len(compressed))
+	writeBlkHdr(s.w, cSize)
 	if _, err := s.w.Write(compressed); err != nil {
 		return err
 	}
 	s.index = append(s.index, blockInfo{
 		CompressedOffset: uint64(s.curOff),
 		CompressedSize:   cSize,
-		OriginalSize:     oSize,
 	})
 	s.curOff += int64(blkHdrSz + len(compressed))
 	s.an = 0
@@ -95,7 +94,7 @@ func (s *segWriter) finalize() error {
 		}
 	}
 	// End-of-blocks sentinel.
-	writeBlkHdr(s.w, 0, 0)
+	writeBlkHdr(s.w, 0)
 	s.curOff += blkHdrSz
 	// Contiguous index.
 	indexOff := s.curOff
@@ -162,13 +161,19 @@ func ResumeCompressedWriter(path string) (*CompressedWriter, error) {
 		return nil, fmt.Errorf("file was cleanly closed, use NewCompressedWriter to overwrite")
 	}
 
-	index, origSize := scanBlockIndex(f, fileSize)
+	index, endPos := scanBlockIndex(f, fileSize)
 
-	// Compute end position of last valid block.
-	curOff := int64(headerSz)
-	for _, bi := range index {
-		curOff += int64(blkHdrSz) + int64(bi.CompressedSize)
+	// Compute original size from recovered blocks.
+	origSize := int64(0)
+	if len(index) > 0 {
+		lastSize, err := decompressedBlockSize(f, index[len(index)-1], blockSize, algo)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("recover last block: %w", err)
+		}
+		origSize = int64(len(index)-1)*int64(blockSize) + int64(lastSize)
 	}
+	curOff := endPos
 
 	if err := f.Truncate(curOff); err != nil {
 		f.Close()

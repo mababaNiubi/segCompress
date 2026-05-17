@@ -7,13 +7,13 @@ import (
 	"os"
 )
 
-// Binary layout (see README for diagram):
+// Binary layout:
 //
-//   Header  16 B   magic, version, algo, level, blockSize
-//   Blocks  N×     8B inline header + compressed payload
-//   Sentinel 8 B    cSize=0 (end-of-blocks marker)
-//   Index   N×16 B  contiguous block-offset array (fast-open cache)
-//   Footer  32 B    numBlocks, originalSize, indexOffset, magic
+//   Header  16 B   magic, version, algo, level, blockSize, reserved
+//   Blocks  N×     4B inline header (cSize) + compressed payload
+//   Sentinel 4 B    cSize=0 (end-of-blocks marker)
+//   Index   N×12 B  contiguous block-offset array (offset + cSize)
+//   Footer  32 B    numBlocks, originalSize, blockSize, indexOffset, …
 
 // ─── Header ────────────────────────────────────────────────────────
 
@@ -55,9 +55,8 @@ func readHeaderFull(r io.Reader) (algo Algorithm, level int, blockSize int, err 
 
 // ─── Inline block header ───────────────────────────────────────────
 
-func writeBlkHdr(w io.Writer, cSize, oSize uint32) {
+func writeBlkHdr(w io.Writer, cSize uint32) {
 	putU32LE(w, cSize)
-	putU32LE(w, oSize)
 }
 
 // ─── Index (contiguous, written on Close) ──────────────────────────
@@ -66,7 +65,6 @@ func writeIndex(w io.Writer, idx []blockInfo) {
 	for i := range idx {
 		putU64LE(w, idx[i].CompressedOffset)
 		putU32LE(w, idx[i].CompressedSize)
-		putU32LE(w, idx[i].OriginalSize)
 	}
 }
 
@@ -85,7 +83,6 @@ func readIndex(f *os.File, offset int64, n int) ([]blockInfo, error) {
 		idx[i] = blockInfo{
 			CompressedOffset: binary.LittleEndian.Uint64(b[o : o+8]),
 			CompressedSize:   binary.LittleEndian.Uint32(b[o+8 : o+12]),
-			OriginalSize:     binary.LittleEndian.Uint32(b[o+12 : o+16]),
 		}
 	}
 	return idx, nil

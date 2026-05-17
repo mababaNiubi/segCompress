@@ -37,14 +37,15 @@ const (
 	magicStr  = "SEGC"
 	formatVer = uint8(1)
 	headerSz  = 16 // magic(4)+ver(1)+algo(1)+level(1)+blockSize(4)+rsvd(5)
-	blkHdrSz  = 8  // per-block inline: compressedSize(4)+originalSize(4)
-	idxSlotSz = 16 // index entry: offset(8)+cSize(4)+oSize(4)
+	blkHdrSz  = 4  // per-block inline: compressedSize(4)
+	idxSlotSz = 12 // index entry: offset(8)+cSize(4)
 	footerSz  = 32 // see format.go
 )
 
 // blockInfo is one entry in the block index.
+// OriginalSize is not stored — for blocks 0..N-2 it equals blockSize,
+// for block N-1 it is computed from footer.originalSize.
 type blockInfo struct {
 	CompressedOffset uint64 // absolute file offset of the inline block header
 	CompressedSize   uint32 // compressed payload length
-	OriginalSize     uint32 // uncompressed length (≤ blockSize)
 }
