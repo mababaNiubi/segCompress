@@ -11,7 +11,7 @@ import (
 
 // compressBlock dispatches to the selected codec.  zstdEnc and lz4HT are
 // lazy-allocated and reused across calls within a single file / stream.
-func compressBlock(data []byte, algo Algorithm, level int, zstdEnc **zstd.Encoder, lz4HT *[]int) ([]byte, error) {
+func compressBlock(data []byte, algo Algorithm, level int, zstdEnc **zstd.Encoder) ([]byte, error) {
 	switch algo {
 	case AlgoSnappy:
 		dst := make([]byte, snappy.MaxEncodedLen(len(data)))
@@ -29,14 +29,7 @@ func compressBlock(data []byte, algo Algorithm, level int, zstdEnc **zstd.Encode
 
 	case AlgoLZ4:
 		buf := make([]byte, lz4.CompressBlockBound(len(data)))
-		var ht []int
-		if len(data) < 1<<16 {
-			if *lz4HT == nil {
-				*lz4HT = make([]int, 1<<16)
-			}
-			ht = *lz4HT
-		}
-		n, err := lz4.CompressBlock(data, buf, ht)
+		n, err := lz4.CompressBlock(data, buf, nil)
 		if err != nil {
 			return nil, err
 		}

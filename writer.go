@@ -29,7 +29,6 @@ type segWriter struct {
 	index []blockInfo
 
 	zstdEnc *zstd.Encoder
-	lz4HT   []int
 
 	origSize int64
 	closed   bool
@@ -66,7 +65,7 @@ func (s *segWriter) write(p []byte) (int, error) {
 
 // flush compresses the accumulated block and writes it.
 func (s *segWriter) flush() error {
-	compressed, err := compressBlock(s.abuf[:s.an], s.algo, s.level, &s.zstdEnc, &s.lz4HT)
+	compressed, err := compressBlock(s.abuf[:s.an], s.algo, s.level, &s.zstdEnc)
 	if err != nil {
 		return fmt.Errorf("compress: %w", err)
 	}
